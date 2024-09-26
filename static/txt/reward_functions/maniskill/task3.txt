@@ -1,0 +1,27 @@
+def compute_dense_reward(self, obs: Any, action: torch.Tensor, info: Dict):
+
+    # Compute the distance from the TCP (gripper) to the object (sphere)
+    tcp_to_obj_dist = torch.linalg.norm(self.obj.pose.p - self.agent.tcp.pose.p, axis=1)
+    reaching_reward = 1 - torch.tanh(5 * tcp_to_obj_dist)
+    reward = reaching_reward
+    
+    # Add grasping reward if the object is being grasped
+    is_grasped = info["is_obj_grasped"]
+    reward += is_grasped
+    
+    # Compute the distance from the object (sphere) to the bin
+    obj_to_bin_dist = torch.linalg.norm(self.bin.pose.p - self.obj.pose.p, axis=1)
+    placing_reward = 1 - torch.tanh(5 * obj_to_bin_dist)
+    reward += placing_reward * is_grasped
+    
+    # Add an additional z-axis penalty to ensure precise placement into the bin
+    z_offset_penalty = torch.abs(self.bin.pose.p[..., 2] - self.obj.pose.p[..., 2])
+    reward -= 5 * torch.tanh(5 * z_offset_penalty) * is_grasped
+    
+    # Add reward if the object is on the bin and the robot is static
+    reward += info["is_obj_static"] * info["is_obj_on_bin"]
+    
+    # Set reward to maximum if the task is successfully completed
+    reward[info["success"]] = 13
+    
+    return reward

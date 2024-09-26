@@ -1,0 +1,22 @@
+def gen_plan(initial:RavenBelief, x_offset_yellow:float, y_offset_yellow:float, x_offset_green:float, y_offset_green:float, z_offset:float):
+    plan = []
+
+    # Identifying the objects
+    yellow_block = initial.objects["object_0"]
+    green_block = initial.objects["object_1"]
+    bowl = initial.objects["object_3"]
+
+    # Adjusting the z-coordinate for the placement inside the bowl to account for the offset caused by the gripper
+    # Assuming the bowl's z-coordinate is the top edge of the bowl
+    z_bowl_top = bowl.pose.z + z_offset  # Adjusting for the height of the bowl and any initial offset
+
+    # Picking up the yellow block and placing it inside the bowl with specified offsets
+    plan.append(Action("pick", yellow_block.pose.point))
+    plan.append(Action("place", [bowl.pose.x + x_offset_yellow, bowl.pose.y + y_offset_yellow, z_bowl_top]))
+
+    # Picking up the green block and placing it on top of the yellow block inside the bowl with specified offsets
+    # Assuming BLOCK_SIZE is the height of each block
+    plan.append(Action("pick", green_block.pose.point))
+    plan.append(Action("place", [bowl.pose.x + x_offset_green, bowl.pose.y + y_offset_green, z_bowl_top + BLOCK_SIZE]))
+
+    return plan
