@@ -1,27 +1,32 @@
 def compute_dense_reward(self, obs: Any, action: torch.Tensor, info: Dict):
-    # Distance from the TCP (Tool Center Point) to cubeA
-    tcp_to_cubeA_dist = torch.linalg.norm(
-    self.cubeA.pose.p - self.agent.tcp.pose.p, axis=1
+    # Calculate the distance from the TCP (tool center point) to the handle
+    tcp_to_handle_dist = torch.linalg.norm(
+        info["handle_link_pos"] - self.agent.tcp.pose.p, axis=1
     )
-    reaching_reward = 1 - torch.tanh(5 * tcp_to_cubeA_dist)
+    reaching_reward = 1 - torch.tanh(5 * tcp_to_handle_dist)
     reward = reaching_reward
 
-    # Reward for grasping cubeA
-    is_cubeA_grasped = info["is_cubeA_grasped"]
-    reward += is_cubeA_grasped
+    # Check if the handle is being grasped
+    is_grasped = self.agent.is_grasping(self.handle_link)
+    reward += is_grasped
 
-    # Distance from cubeA to cubeB
-    cubeA_to_cubeB_dist = torch.linalg.norm(
-    self.cubeB.pose.p - self.cubeA.pose.p, axis=1
+    # Calculate how much the drawer is opened
+    open_progress = self.handle_link.joint.qpos / self.target_qpos
+    opening_reward = torch.clamp(open_progress, 0, 1)
+    reward += opening_reward * is_grasped
+
+    # Check if the link is static
+    static_reward = 1 - torch.tanh(
+        5 * torch.linalg.norm(self.handle_link.linear_velocity, axis=1)
     )
-    stacking_reward = 1 - torch.tanh(5 * cubeA_to_cubeB_dist)
-    reward += stacking_reward * is_cubeA_grasped
+    reward += static_reward * info["open_enough"]
 
-    # Reward for keeping cubeA static
-    is_cubeA_static = info["is_cubeA_static"]
-    static_reward = 1 - torch.tanh(5 * torch.linalg.norm(self.agent.robot.get_qvel()[..., :-2], axis=1))
-    reward += static_reward * info["is_cubeA_on_cubeB"]
-
-    # Final success reward
-    reward[info["success"]] = 8
+    # Assign a high reward for successful task completion
+    reward[info["success"]] = 5
     return reward
+
+def compute_normalized_dense_reward(
+    self, obs: Any, action: torch.Tensor, info: Dict
+    ):
+    max_reward = 5.0
+    return self.compute_dense_reward(obs=obs, action=action, info=info) / max_reward

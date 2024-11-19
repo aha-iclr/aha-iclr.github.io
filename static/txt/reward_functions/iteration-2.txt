@@ -1,0 +1,57 @@
+def compute_dense_reward(self, obs: Any, action: torch.Tensor, info: Dict):
+    # Calculate the distance from the TCP (tool center point) to the handle
+    tcp_to_handle_dist = torch.linalg.norm(
+        info["handle_link_pos"] - self.agent.tcp.pose.p, axis=1
+    )
+    reaching_reward = 1 - torch.tanh(5 * tcp_to_handle_dist)
+    reward = reaching_reward * 2 # Amplify reaching reward
+
+    # Evaluate alignment of the gripper orientation with the handle
+    desired_orientation_vector = info["handle_orientation_vector"] # Parallel to handle
+    current_orientation_vector = self.agent.tcp.orientation_vector # Gripper's orientation
+    cosine_similarity = torch.sum(
+        desired_orientation_vector * current_orientation_vector, axis=1
+        ) / (
+        torch.linalg.norm(desired_orientation_vector, axis=1)
+            * torch.linalg.norm(current_orientation_vector, axis=1)
+    )
+    orientation_alignment_reward = torch.clamp(cosine_similarity, 0, 1)
+    orientation_penalty = 1 - orientation_alignment_reward
+    orientation_reward = 1 - torch.tanh(10 * orientation_penalty)
+    reward += orientation_reward
+
+    # Check if the handle is being grasped tightly
+    is_grasped = self.agent.is_grasping(self.handle_link)
+    grasp_tightness = torch.linalg.norm(self.agent.gripper_force) # Measure grasp force
+    tight_grasp_reward = torch.clamp(grasp_tightness - 0.5, 0, 1) # Ensure tight grasping
+    grasping_reward = torch.where(is_grasped, 3.0 + tight_grasp_reward, 0.0)
+    reward += grasping_reward
+
+    # Directional reward for pulling the drawer outward
+    pull_direction = info["drawer_outward_vector"] # Vector indicating outward direction
+    current_pull_vector = self.handle_link.pose.p - self.agent.tcp.pose.p # Pull vector from TCP to handle
+    normalized_pull_vector = current_pull_vector / torch.linalg.norm(current_pull_vector, axis=1, keepdims=True)
+    pull_alignment = torch.sum(pull_direction * normalized_pull_vector, axis=1)
+    pull_reward = torch.clamp(pull_alignment, 0, 1) # Reward aligned pulls
+    reward += 3 * pull_reward * is_grasped.float()
+
+    # Penalize deviation from pulling direction
+    pull_penalty = 1 - pull_alignment
+    reward -= torch.tanh(10 * pull_penalty) * is_grasped.float()
+
+    # Calculate how much the drawer is opened
+    open_progress = self.handle_link.joint.qpos / self.target_qpos
+    opening_reward = torch.clamp(open_progress, 0, 1)
+    opening_reward = opening_reward * is_grasped # Only reward if handle is grasped
+    reward += opening_reward
+
+    # Encourage keeping the handle static when sufficiently opened
+    static_reward = 1 - torch.tanh(
+        5 * torch.linalg.norm(self.handle_link.linear_velocity, axis=1)
+    )
+    static_reward = static_reward * info["open_enough"] * is_grasped
+    reward += static_reward
+
+    # Assign a high reward for successful task completion
+    reward[info["success"]] = 5
+    return reward
